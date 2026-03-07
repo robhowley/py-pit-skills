@@ -1,0 +1,11 @@
+{
+  "name": "claude-py-pit",
+  "version": "0.1.0",
+  "description": "A Claude Code plugin for Python development",
+  "author": {
+    "name": "roberthowley"
+  },
+  "repository": "https://github.com/roberthowley/claude-py-pit",
+  "license": "MIT",
+  "keywords": ["python", "development"]
+}
