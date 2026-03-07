@@ -1,11 +1,21 @@
 {
   "name": "py-pit",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "A Claude Code plugin for Python development",
   "author": {
     "name": "robhowley"
   },
   "repository": "https://github.com/robhowley/claude-py-pit",
   "license": "MIT",
-  "keywords": ["python", "fastapi", "uv", "click", "cli", "rest-api", "scaffolding", "testing", "pytest"]
+  "keywords": [
+    "python",
+    "fastapi",
+    "uv",
+    "click",
+    "cli",
+    "rest-api",
+    "scaffolding",
+    "testing",
+    "pytest"
+  ]
 }
