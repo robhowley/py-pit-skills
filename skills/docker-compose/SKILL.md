@@ -19,7 +19,7 @@ Use this skill when the user wants to:
 ## Variables
 
 - `{pkg_name}` — snake_case package name (matches the project directory and Python package)
-- `{PKG_NAME}` — SCREAMING_SNAKE_CASE env prefix (e.g. `my_service` → `MY_SERVICE`)
+- `{PKG_NAME}_` — env var prefix, only used if a pydantic-settings `env_prefix` is detected in the repo (e.g., `MY_SERVICE_`); otherwise plain names are used
 
 ---
 
@@ -49,9 +49,17 @@ If Postgres is signaled, also note which driver is already present (`psycopg2-bi
 
 Grep routes for `/health`, `/healthz`, `/ping`, `/api/v1/health`, or similar. Record the exact path if found.
 
-**5. Present inference summary**
+**5. Detect app entrypoint**
 
-Tell the user what was found and what will be generated. Ask for confirmation only if something is genuinely ambiguous (e.g., multiple config files with conflicting signals, or an existing `Dockerfile` that may need replacement vs. extension).
+Look for the ASGI `app` object in `{pkg_name}/main.py`, `{pkg_name}/app.py`, or `{pkg_name}/application.py`. Record the module path (e.g., `{pkg_name}.main:app`). Also check `[project.scripts]` in `pyproject.toml` for any uvicorn/gunicorn invocations. This becomes the `CMD` in the Dockerfile — default to `{pkg_name}.main:app` only if no entrypoint is found elsewhere.
+
+**6. Detect env prefix**
+
+Grep for `env_prefix` in `core/config.py`, `config.py`, `settings.py`, or similar. If a pydantic-settings prefix is found (e.g., `env_prefix="MY_SERVICE_"`), use it in `.env.compose`. If no prefix is detected, use plain variable names (`DATABASE_URL`, `REDIS_URL`, `DEBUG`) without a package prefix.
+
+**7. Present inference summary**
+
+Tell the user what was found and what will be generated. Ask for confirmation only if something is genuinely ambiguous (e.g., multiple config files with conflicting signals, or an existing `Dockerfile` with unclear extension points).
 
 ---
 
@@ -76,7 +84,7 @@ COPY --from=builder /app/{pkg_name} /app/{pkg_name}
 ENV PATH="/app/.venv/bin:$PATH"
 EXPOSE 8000
 {HEALTHCHECK}
-CMD ["/app/.venv/bin/uvicorn", "{pkg_name}.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["/app/.venv/bin/uvicorn", "{detected_entrypoint|pkg_name.main:app}", "--host", "0.0.0.0", "--port", "8000"]
 ```
 
 **If no `uv.lock`:**
@@ -85,17 +93,15 @@ CMD ["/app/.venv/bin/uvicorn", "{pkg_name}.main:app", "--host", "0.0.0.0", "--po
 FROM python:3.12-slim AS builder
 WORKDIR /app
 COPY pyproject.toml ./
-RUN pip install --no-cache-dir build && python -m build --wheel
-RUN pip install --no-cache-dir dist/*.whl
+COPY {pkg_name}/ ./{pkg_name}/
+RUN pip install --no-cache-dir --prefix=/install .
 
 FROM python:3.12-slim
 WORKDIR /app
-COPY --from=builder /usr/local/lib/python3.12 /usr/local/lib/python3.12
-COPY --from=builder /usr/local/bin /usr/local/bin
-COPY {pkg_name}/ ./{pkg_name}/
+COPY --from=builder /install /usr/local
 EXPOSE 8000
 {HEALTHCHECK}
-CMD ["uvicorn", "{pkg_name}.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "{detected_entrypoint|pkg_name.main:app}", "--host", "0.0.0.0", "--port", "8000"]
 ```
 
 **HEALTHCHECK selection:**
@@ -105,12 +111,12 @@ CMD ["uvicorn", "{pkg_name}.main:app", "--host", "0.0.0.0", "--port", "8000"]
   HEALTHCHECK --interval=10s --timeout=3s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000{detected_path}')"
   ```
-- If no health endpoint exists, use a process-level check and note that a health endpoint should be added:
+- If no health endpoint exists, use a TCP liveness check and note that a health endpoint should be added:
   ```dockerfile
   HEALTHCHECK --interval=10s --timeout=3s --retries=3 \
-    CMD python -c "import sys; sys.exit(0)"
+    CMD python -c "import socket; s=socket.socket(); s.settimeout(2); s.connect(('localhost', 8000)); s.close()"
   ```
-  > Note: No health route was found. Consider adding a `/health` endpoint; the HEALTHCHECK currently uses a process-level fallback.
+  > Note: No health route was found. This is a **liveness-only** check — it confirms the server is accepting TCP connections but does not verify app readiness. Add a `/health` endpoint for a proper readiness check.
 
 ---
 
@@ -163,13 +169,22 @@ volumes:
 
 ## Step 4 — Generate `.env.compose`
 
-Environment variables for the running containers. Uses the pydantic-settings env prefix convention from `core/config.py`.
+Environment variables for the running containers. Use the env prefix detected in Step 1 if a pydantic-settings prefix was found; otherwise use plain variable names. Generate **one** `.env.compose` — not both variants.
 
+If prefix detected (e.g. `MY_SERVICE_`):
 ```
 # docker compose environment — do not commit real secrets
-{PKG_NAME}_DATABASE_URL=postgresql+psycopg2://postgres:postgres@db:5432/{pkg_name}  # only if postgres signaled
-{PKG_NAME}_REDIS_URL=redis://cache:6379/0                                            # only if redis signaled
-{PKG_NAME}_DEBUG=false
+MY_SERVICE_DATABASE_URL=postgresql+psycopg2://postgres:postgres@db:5432/{pkg_name}  # only if postgres signaled
+MY_SERVICE_REDIS_URL=redis://cache:6379/0                                            # only if redis signaled
+MY_SERVICE_DEBUG=false
+```
+
+If no prefix detected:
+```
+# docker compose environment — do not commit real secrets
+DATABASE_URL=postgresql+psycopg2://postgres:postgres@db:5432/{pkg_name}             # only if postgres signaled
+REDIS_URL=redis://cache:6379/0                                                       # only if redis signaled
+DEBUG=false
 ```
 
 Also create `.env.compose.example` with the same content — this file IS committed to version control as a template.
@@ -213,11 +228,11 @@ Inspect the existing stack first:
 
 Follow the repo's dependency management workflow:
 - `uv.lock` present → `uv add <driver>`
-- No `uv.lock` → `pip install <driver>` and update `pyproject.toml` manually
+- No `uv.lock` → add `<driver>` to `[project.dependencies]` in `pyproject.toml` and follow the project's dependency-management workflow
 
 **Redis** — only if Redis was signaled and `redis` is not already in deps:
 - `uv.lock` present → `uv add redis`
-- No `uv.lock` → `pip install redis`
+- No `uv.lock` → add `redis` to `[project.dependencies]` in `pyproject.toml` and follow the project's dependency-management workflow
 
 ---
 
@@ -236,7 +251,7 @@ If no health endpoint exists, omit the `curl` line and note that one should be a
 
 ## Hard constraints
 
-1. Always use multi-stage builds — never ship builder layers to production
+1. Always use multi-stage builds — keep the final image lean by excluding build tooling and intermediate artifacts
 2. Never embed real credentials in `docker-compose.yml` — always use `env_file`
 3. Always include a `HEALTHCHECK` in the Dockerfile and `healthcheck:` on backing services
 4. Use `depends_on: condition: service_healthy` — not plain `depends_on`
@@ -244,7 +259,7 @@ If no health endpoint exists, omit the `curl` line and note that one should be a
 6. Never introduce a backing service (Postgres, Redis) unless the repo or user request shows it is needed — no signals → app-only
 7. If Docker artifacts already exist, extend them; do not create a parallel competing setup
 8. Match the project's existing dependency management workflow — do not assume uv if `uv.lock` is absent
-9. Do not invent or hardcode a health endpoint path — detect from existing routes or use a process-level check
+9. Do not invent or hardcode a health endpoint path — detect from existing routes or use the TCP liveness fallback
 
 ---
 
@@ -252,7 +267,7 @@ If no health endpoint exists, omit the `curl` line and note that one should be a
 
 - [ ] `Dockerfile` present, multi-stage, appropriate base image for repo tooling
 - [ ] `docker-compose.yml` scoped to inferred services only; no uninferred backing services added
-- [ ] `HEALTHCHECK` uses detected path or process-level fallback — no invented path
+- [ ] `HEALTHCHECK` uses detected path or TCP liveness fallback — no invented path
 - [ ] `.env.compose` present, `.gitignore` updated, `.env.compose.example` committed
 - [ ] No existing Docker artifacts replaced without user confirmation
 - [ ] No new backing services introduced without repo evidence or explicit user request
