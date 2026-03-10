@@ -5,7 +5,7 @@ description: Opinionated schema architecture for Python API projects
 disable-model-invocation: false
 ---
 
-# pydantic-io
+# pydantic-schemas
 
 Opinionated guidance for designing **API request/response schemas**
 using **Pydantic v2** in new Python backend projects.

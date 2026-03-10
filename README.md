@@ -15,10 +15,13 @@ Add the plugin marketplace, then install py-pit:
 
 ## Skills
 
-| Skill            | Trigger on                                                             |
-| ---------------- | ---------------------------------------------------------------------- |
-| fastapi-init     | new FastAPI service, scaffold an API, new microservice                 |
-| uv               | dependency management, lockfiles, env setup, migration from pip/poetry |
-| click-cli        | designing or generating a new Click CLI                                |
-| click-cli-linter | auditing or improving an existing Click CLI                            |
+| Skill             | Trigger on                                                             |
+| ----------------- | ---------------------------------------------------------------------- |
+| fastapi-init      | new FastAPI service, scaffold an API, new microservice                 |
+| uv                | dependency management, lockfiles, env setup, migration from pip/poetry |
+| click-cli         | designing or generating a new Click CLI                                |
+| click-cli-linter  | auditing or improving an existing Click CLI                            |
+| pydantic-schemas  | request/response schema design, Pydantic v2 models, schema patterns    |
+| code-quality      | linting setup, Ruff, pre-commit, code health tooling                   |
+| docker-compose    | local dev Docker Compose setup, containerizing a project               |
 
