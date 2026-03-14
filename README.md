@@ -1,10 +1,10 @@
 # py-pit
 
-![version](https://img.shields.io/github/v/tag/robhowley/claude-py-pit)
+![version](https://img.shields.io/github/v/tag/robhowley/py-pit-skills)
 
 Opinionated Python backend workflows for Claude Code.
 
-`py-pit` encodes common backend development workflows as Claude skills for the modern Python API stack: FastAPI services, uv environments, SQLAlchemy models, Alembic migrations, configuration management, and CLI tooling.
+`py-pit` encodes common backend development workflows as Claude/Pi skills for the modern Python API stack: FastAPI services, uv environments, SQLAlchemy models, Alembic migrations, configuration management, and CLI tooling.
 
 ## Install
 
@@ -13,19 +13,19 @@ Opinionated Python backend workflows for Claude Code.
 Add the plugin marketplace, then install py-pit:
 
 ```
-/plugin marketplace add robhowley/claude-py-pit
-/plugin install py-pit@claude-py-pit
+/plugin marketplace add robhowley/py-pit-skills
+/plugin install py-pit@py-pit-skills
 ```
 
 ### pi
 
 ```bash
-pi install https://github.com/robhowley/claude-py-pit
+pi install https://github.com/robhowley/py-pit-skills
 ```  
 
 ## Skills
 
-| Skill                | Activates when Claude detects                                                              |
+| Skill                | Activates when LLM detects                                                              |
 |----------------------|--------------------------------------------------------------------------------------------|
 | `fastapi-init`       | new FastAPI service, scaffold an API, new microservice                                     |
 | `uv`                 | dependency management, lockfiles, env setup, migration from pip/poetry                     |
