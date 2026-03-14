@@ -1,4 +1,5 @@
 ---
+name: pydantic-schemas
 description: Opinionated schema architecture for Python API projects
   using Pydantic v2. Defines request, response, query, command, batch,
   and pagination schema patterns to prevent schema drift in new projects.

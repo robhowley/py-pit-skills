@@ -1,4 +1,5 @@
 ---
+name: click-cli-linter
 description: Audit and improve existing Python Click CLIs by identifying architecture problems, anti-patterns, and CLI UX issues, then proposing minimal, high-value fixes.
 disable-model-invocation: false
 ---

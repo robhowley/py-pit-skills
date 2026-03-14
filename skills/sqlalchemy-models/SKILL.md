@@ -1,4 +1,5 @@
 ---
+name: sqlalchemy-models
 description: Production-ready SQLAlchemy 2.x model patterns for Python backend projects. Use this skill when the user needs to define ORM models, add relationships, introduce a canonical DeclarativeBase, create shared mixins, organize a models package, or fix inconsistent SQLAlchemy model structure in a FastAPI or Python backend.
 disable-model-invocation: false
 ---
