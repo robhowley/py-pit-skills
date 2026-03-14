@@ -1,4 +1,5 @@
 ---
+name: pytest-service
 description: Write disciplined backend tests for FastAPI services with pytest. Use
   this skill when adding tests to a Python/FastAPI service, setting up SQLAlchemy
   test fixtures, wiring TestClient with DI overrides, mocking external clients, or

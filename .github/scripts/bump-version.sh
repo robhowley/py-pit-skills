@@ -2,6 +2,7 @@
 set -euo pipefail
 
 PLUGIN_JSON=".claude-plugin/plugin.json"
+PACKAGE_JSON="package.json"
 
 current=$(jq -r .version "$PLUGIN_JSON")
 IFS='.' read -r major minor patch <<< "$current"
@@ -53,7 +54,15 @@ if [[ "$new_version" == "$current" ]]; then
 fi
 
 echo "Bumping $current → $new_version ($bump)" >&2
+
+# Update .claude-plugin/plugin.json
 tmp=$(mktemp)
 jq --arg v "$new_version" '.version = $v' "$PLUGIN_JSON" > "$tmp"
 mv "$tmp" "$PLUGIN_JSON"
+
+# Update package.json
+tmp=$(mktemp)
+jq --arg v "$new_version" '.version = $v' "$PACKAGE_JSON" > "$tmp"
+mv "$tmp" "$PACKAGE_JSON"
+
 echo "$new_version"

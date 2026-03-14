@@ -1,4 +1,5 @@
 ---
+name: click-cli
 description: Design, generate, and improve Python CLIs using the Click library. Focus on idiomatic architecture, command groups, modular layouts, CLI UX conventions, and avoiding common Click anti-patterns.
 disable-model-invocation: false
 ---

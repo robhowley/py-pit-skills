@@ -1,4 +1,5 @@
 ---
+name: code-quality
 description: Opinionated code health stack for Python repos using Ruff, pre-commit, and Markdown linting. Prefers consolidation over redundant tooling, preserves working repos unless migration is requested, and provides a simple adoption path for both new and existing projects.
 disable-model-invocation: false
 ---

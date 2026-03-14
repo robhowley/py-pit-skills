@@ -1,4 +1,5 @@
 ---
+name: alembic-migrations
 description: Production-safe Alembic migration workflows for SQLAlchemy
   2.x projects. Use this skill when adding Alembic, generating
   migrations, reviewing autogenerate diffs, fixing broken migrations, or

@@ -1,4 +1,5 @@
 ---
+name: uv
 description: Expert guidance for correct uv usage in Python projects. Handles dependency management, environments, command execution, migration from pip/poetry/pip-tools, lockfile correctness, and uv anti-patterns.
 disable-model-invocation: false
 ---

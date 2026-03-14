@@ -1,4 +1,5 @@
 ---
+name: fastapi-init
 description: Scaffold a complete, production-ready FastAPI project from scratch. Use this skill whenever the user wants to create, initialize, start, or bootstrap a FastAPI service, REST API, or Python web service — even if they just say "new service", "new API", or "new microservice". Handles uv setup, standard FastAPI directory layout, uvicorn runner, click CLI entry point, and a full pytest suite with DI overrides, TestClient, and SQLite fixtures. Always invoke for new Python API projects.
 ---
 

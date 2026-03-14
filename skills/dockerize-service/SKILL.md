@@ -1,3 +1,8 @@
+---
+name: dockerize-service
+description: Generate a local-development Docker Compose setup for an existing Python project. Produces a multi-stage Dockerfile, Compose file, env config, and dockerignore based on detected project signals.
+---
+
 # Skill: dockerize-service
 
 ## Core position

@@ -1,4 +1,5 @@
 ---
+name: fastapi-errors
 description: Opinionated error architecture for FastAPI services. Enforces a single internal exception hierarchy, constructor-based messages, consistent API error responses, and centralized logging for unexpected failures.
 disable-model-invocation: false
 ---
