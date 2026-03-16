@@ -49,22 +49,25 @@ Do not duplicate correlation logic elsewhere.
 Entrypoints include HTTP requests, background job workers, CLI tasks, and
 async task roots.
 
-For HTTP requests, use middleware to read `x-request-id` if present,
-otherwise generate one, then set it into context:
+For HTTP requests, use a functional middleware to read `x-request-id` if
+present, otherwise generate one, then set it into context:
 
 ``` python
 import uuid
-from starlette.middleware.base import BaseHTTPMiddleware
+from fastapi import Request
 from app.observability.correlation import correlation_id
 
-class CorrelationMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request, call_next):
-        cid = request.headers.get("x-request-id") or str(uuid.uuid4())
-        correlation_id.set(cid)
-        response = await call_next(request)
-        response.headers["x-request-id"] = cid
-        return response
+@app.middleware("http")
+async def correlation_middleware(request: Request, call_next):
+    cid = request.headers.get("x-request-id") or str(uuid.uuid4())
+    correlation_id.set(cid)
+    response = await call_next(request)
+    response.headers["x-request-id"] = cid
+    return response
 ```
+
+Prefer `@app.middleware("http")` over `BaseHTTPMiddleware` — the class-based
+approach can swallow exceptions and interfere with streaming responses.
 
 For job workers and CLI entrypoints, set `correlation_id` before executing
 the task -- either from a passed value or a freshly generated one.
@@ -151,7 +154,7 @@ import asyncio
 ctx = contextvars.copy_context()
 loop.run_in_executor(None, ctx.run, task)
 # or for coroutines:
-asyncio.get_event_loop().call_soon(ctx.run, task)
+asyncio.get_running_loop().call_soon(ctx.run, task)
 ```
 
 This applies the same principle as Rule 6 -- correlation must be
