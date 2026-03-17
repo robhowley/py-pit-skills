@@ -2,22 +2,13 @@
 
 ![version](https://img.shields.io/github/v/tag/robhowley/py-pit-skills)
 
-Opinionated Python backend workflows for Claude Code.
+Opinionated Python API development skills for AI coding agents (Pi, Claude Code).
 
-`py-pit` encodes common backend development workflows as Claude/Pi skills for the modern Python API stack: FastAPI services, uv environments, SQLAlchemy models, Alembic migrations, configuration management, and CLI tooling.
+`py-pit` encodes opinionated Python API development patterns as skills for AI coding agents — works with both **Pi** and **Claude Code**. Covers the modern Python API stack: FastAPI services, uv environments, SQLAlchemy models, Alembic migrations, configuration management, and CLI tooling.
 
 ## Install
 
-### Claude Code
-
-Add the plugin marketplace, then install py-pit:
-
-```
-/plugin marketplace add robhowley/py-pit-skills
-/plugin install py-pit@py-pit-skills
-```
-
-### pi
+### Pi
 
 Install from npm:
 
@@ -31,7 +22,18 @@ Or directly from GitHub:
 pi install https://github.com/robhowley/py-pit-skills
 ```
 
+### Claude Code
+
+Add the plugin marketplace, then install py-pit:
+
+```
+/plugin marketplace add robhowley/py-pit-skills
+/plugin install py-pit@py-pit-skills
+```
+
 ## Skills
+
+Skills activate automatically when the agent detects relevant intent — no manual prompting required.
 
 | Skill                | Activates when LLM detects                                                              |
 |----------------------|--------------------------------------------------------------------------------------------|
