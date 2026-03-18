@@ -40,19 +40,11 @@ Alembic only detects models that are **imported at runtime**.
 A canonical module must import every ORM model so metadata is complete.
 
 Do not assume `app/`. Use the project's existing `Base` definition --
-typically at `{pkg_name}/models/base.py` (see sqlalchemy-models skill).
+typically at `{pkg_name}/db/session.py` (see sqlalchemy-models skill).
 
 Example:
 
 ```python
-# {pkg_name}/models/base.py
-from sqlalchemy.orm import DeclarativeBase
-
-
-class Base(DeclarativeBase):
-    pass
-
-
 # {pkg_name}/models/__init__.py
 from {pkg_name}.models.user import User
 from {pkg_name}.models.order import Order
@@ -61,7 +53,7 @@ from {pkg_name}.models.order import Order
 Alembic must reference:
 
 ```python
-from {pkg_name}.models.base import Base
+from {pkg_name}.db.session import Base
 
 target_metadata = Base.metadata
 ```
@@ -179,7 +171,7 @@ Before generating anything:
    exist. If they do, **modify the existing configuration** rather than
    reinitializing. Never run `alembic init` if `alembic/` already exists.
 2. Identify where `Base` is defined. If the project used the
-   sqlalchemy-models skill, it will be at `{pkg_name}/models/base.py`.
+   sqlalchemy-models skill, it will be at `{pkg_name}/db/session.py`.
 3. Identify which module imports all models (typically
    `{pkg_name}/models/__init__.py`). This is the module env.py must import.
 4. Note the existing package root. For fastapi-init projects it is
@@ -238,7 +230,7 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from {pkg_name}.core.config import settings
-from {pkg_name}.models.base import Base
+from {pkg_name}.db.session import Base
 import {pkg_name}.models  # noqa: F401 — ensures all models are imported
 
 config = context.config
@@ -280,9 +272,9 @@ else:
     run_migrations_online()
 ```
 
-**Naming conventions**: Projects should configure SQLAlchemy
-`naming_convention` on `MetaData`. This is typically defined where
-`Base` is created (see sqlalchemy-models skill) -- not here.
+**Naming conventions**: The naming convention is defined on `Base` in
+`db/session.py` (see sqlalchemy-models skill) and is picked up
+automatically by Alembic through `target_metadata = Base.metadata`.
 
 **Async note**: Alembic migrations run synchronously even in async
 applications.

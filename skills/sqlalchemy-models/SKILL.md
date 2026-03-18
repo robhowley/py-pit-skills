@@ -130,14 +130,29 @@ A correct solution produced by this skill should usually include:
 
 ### 1) Base class
 
-Prefer a single canonical base:
+Prefer a single canonical base in `db/session.py`, co-located with the engine and session factory. Include a naming convention so Alembic generates predictable constraint names:
 
 ```python
+from sqlalchemy import MetaData
 from sqlalchemy.orm import DeclarativeBase
+
+convention = {
+    "ix": "ix_%(column_0_label)s",
+    "uq": "uq_%(table_name)s_%(column_0_name)s",
+    "ck": "ck_%(table_name)s_%(constraint_name)s",
+    "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
+    "pk": "pk_%(table_name)s",
+}
 
 
 class Base(DeclarativeBase):
-    pass
+    metadata = MetaData(naming_convention=convention)
+```
+
+Model files import Base from `db/session.py`:
+
+```python
+from {pkg_name}.db.session import Base
 ```
 
 Do not create multiple unrelated declarative bases unless the repo already
@@ -270,17 +285,18 @@ other layouts it may be `app/models/` or similar.
 
 ```text
 {pkg_name}/
+  db/
+    session.py          # Base, TimestampMixin, engine, SessionLocal, get_db
   models/
     __init__.py
-    base.py
     user.py
     post.py
 ```
 
 Where appropriate:
 
-- `base.py` contains `Base` and small shared mixins
-- each entity gets its own module
+- `Base` and shared mixins live in `db/session.py` (co-located with engine and session)
+- each entity gets its own module under `models/`
 - `models/__init__.py` should import all model classes so that
   `Base.metadata` is fully populated when Alembic (or any other tool)
   imports it — this is what makes autogenerate reliable
@@ -297,14 +313,15 @@ Prefer explicit imports.
 Good:
 
 ```python
-from app.models.user import User
-from app.models.post import Post
+from {pkg_name}.db.session import Base
+from {pkg_name}.models.user import User
+from {pkg_name}.models.post import Post
 ```
 
 Avoid wildcard imports:
 
 ```python
-from app.models import *
+from {pkg_name}.models import *
 ```
 
 Also avoid tangled cross-import chains between model modules.
@@ -412,9 +429,9 @@ dependencies.
 - `settings-config` — database URL and other config values come from here
 - `pydantic-schemas` — API request/response schemas that mirror (but stay
   separate from) the ORM models
-- `alembic-migrations` *(future)* — migration authoring from model metadata
+- `alembic-migrations` — migration authoring from model metadata
 - `crud-route-builder` *(future)* — service/route layer that consumes models
-- `pytest-backend` *(future)* — test fixtures that use SQLite in-memory DB
+- `pytest-service` — test fixtures that use SQLite in-memory DB
 
 Typical order when building from scratch:
 

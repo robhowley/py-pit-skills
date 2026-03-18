@@ -76,22 +76,24 @@ Example base implementation:
 ```python
 class AppError(Exception):
     status_code = 500
+    detail: str = "An unexpected error occurred."
 
-    def __init__(self, message: str | None = None, **context):
-        self.message = message or "Unhandled application error"
+    def __init__(self, detail: str | None = None, status_code: int | None = None, **context):
+        self.detail = detail if detail is not None else self.__class__.detail
+        self.status_code = status_code if status_code is not None else self.__class__.status_code
         self.context = context
-        super().__init__(self.message)
+        super().__init__(self.detail)
 
     def __str__(self) -> str:
-        return self.message
+        return self.detail
 ```
 
 Key characteristics:
 
 - default HTTP status = **500**
-- default message provided in the constructor
-- optional context data for logging
-- subclasses override `status_code` or pass formatted messages
+- class-level `detail` default, overridable per-instance or per-subclass
+- optional `**context` kwargs for structured logging
+- subclasses override `status_code` and `detail` as class attributes
 
 ---
 
@@ -104,6 +106,7 @@ Example:
 ```python
 class UserNotFoundError(AppError):
     status_code = 404
+    detail = "User not found."
 
     def __init__(self, user_id: int):
         super().__init__(f"User {user_id} not found", user_id=user_id)
@@ -129,7 +132,7 @@ Example:
 async def handle_app_error(request: Request, exc: AppError):
     return JSONResponse(
         status_code=exc.status_code,
-        content={"error": str(exc)},
+        content={"detail": exc.detail},
     )
 ```
 
@@ -137,7 +140,7 @@ Response format is intentionally simple:
 
 ```json
 {
-  "error": "User 123 not found"
+  "detail": "User 123 not found"
 }
 ```
 
@@ -152,8 +155,6 @@ Use a fallback handler for uncaught exceptions:
 ```python
 @app.exception_handler(Exception)
 async def handle_unexpected_error(request: Request, exc: Exception):
-    wrapped = AppError()
-
     logger.exception(
         "Unhandled exception",
         extra={
@@ -164,8 +165,8 @@ async def handle_unexpected_error(request: Request, exc: Exception):
     )
 
     return JSONResponse(
-        status_code=wrapped.status_code,
-        content={"error": str(wrapped)},
+        status_code=500,
+        content={"detail": "An unexpected error occurred."},
     )
 ```
 
@@ -209,7 +210,7 @@ from fastapi.exceptions import RequestValidationError
 async def handle_validation_error(request: Request, exc: RequestValidationError):
     return JSONResponse(
         status_code=422,
-        content={"error": "Invalid request data", "details": exc.errors()},
+        content={"detail": "Invalid request data", "details": exc.errors()},
     )
 ```
 
@@ -249,17 +250,23 @@ These flow through the global `AppError` handler like any other domain exception
 
 For APIs consumed by clients that need to branch on error type — public APIs, client SDKs, multi-error workflows — a machine-readable `code` field is useful. Skip this for internal services or simple CRUD APIs where string parsing is acceptable.
 
-Pattern: add an optional `code` class attribute to the base exception; domain subclasses override it.
+Pattern: add an optional `code` class attribute to the existing base exception; domain subclasses override it. This extends the base class from the Base Exception section - do not redefine it.
 
 ```python
 class AppError(Exception):
     status_code = 500
-    code: str | None = None  # add this
-    ...
+    detail: str = "An unexpected error occurred."
+    code: str | None = None  # add this to the existing base
 
+    ...
+```
+
+Subclasses set a value:
+
+```python
 class UserNotFoundError(AppError):
     status_code = 404
-    code = "user_not_found"  # subclasses set a value
+    code = "user_not_found"
     ...
 ```
 
@@ -268,7 +275,7 @@ Update the global handler to include `code` when present:
 ```python
 @app.exception_handler(AppError)
 async def handle_app_error(request: Request, exc: AppError):
-    content = {"error": str(exc)}
+    content = {"detail": exc.detail}
     if exc.code:
         content["code"] = exc.code
     return JSONResponse(status_code=exc.status_code, content=content)
@@ -278,7 +285,7 @@ Response shape when `code` is set:
 
 ```json
 {
-  "error": "User 123 not found",
+  "detail": "User 123 not found",
   "code": "user_not_found"
 }
 ```

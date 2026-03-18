@@ -80,7 +80,8 @@ Build this layout under the project root:
 │   ├── models/
 │   │   └── __init__.py        # SQLAlchemy declarative models
 │   └── schemas/
-│       └── __init__.py        # Pydantic I/O schemas
+│       ├── __init__.py
+│       └── base.py            # APIModel + ReadModel base schemas
 └── tests/
     ├── __init__.py
     ├── conftest.py
@@ -129,16 +130,28 @@ settings = Settings()
 `get_db` is the single canonical source of truth for database sessions in routes and tests — this is what makes DI overrides in tests work cleanly. Background tasks run outside the FastAPI DI lifecycle and must open sessions via `SessionLocal` directly.
 
 ```python
+from datetime import datetime, timezone
 from typing import Generator
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+from sqlalchemy import DateTime, create_engine
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 from {pkg_name}.core.config import settings
 
 
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 class Base(DeclarativeBase):
     pass
+
+
+class TimestampMixin:
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow,
+    )
 
 
 engine = create_engine(settings.database_url)
@@ -174,9 +187,10 @@ class {PkgName}Error(Exception):
     status_code: int = 500
     detail: str = "An unexpected error occurred."
 
-    def __init__(self, detail: str | None = None, status_code: int | None = None):
+    def __init__(self, detail: str | None = None, status_code: int | None = None, **context):
         self.detail = detail if detail is not None else self.__class__.detail
         self.status_code = status_code if status_code is not None else self.__class__.status_code
+        self.context = context
 ```
 
 Example subclass:
@@ -184,6 +198,33 @@ Example subclass:
 class NotFoundError({PkgName}Error):
     status_code = 404
     detail = "Resource not found."
+```
+
+### {pkg_name}/schemas/base.py
+
+```python
+from pydantic import BaseModel, ConfigDict
+
+
+class APIModel(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+        validate_assignment=True,
+        use_enum_values=True,
+        populate_by_name=True,
+    )
+
+
+class ReadModel(APIModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+        validate_assignment=True,
+        use_enum_values=True,
+        populate_by_name=True,
+        from_attributes=True,
+    )
 ```
 
 ### {pkg_name}/main.py
@@ -194,6 +235,7 @@ Use the lifespan pattern — `on_event` is deprecated.
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from {pkg_name}.api.v1.routes import health
@@ -215,6 +257,16 @@ app.include_router(health.router, prefix="/api/v1")
 @app.exception_handler({PkgName}Error)
 async def {pkg_name}_error_handler(request: Request, exc: {PkgName}Error) -> JSONResponse:
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    return JSONResponse(status_code=422, content={"detail": "Invalid request data", "details": exc.errors()})
+
+
+@app.exception_handler(Exception)
+async def unexpected_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    return JSONResponse(status_code=500, content={"detail": "An unexpected error occurred."})
 ```
 
 ### {pkg_name}/api/v1/routes/health.py
