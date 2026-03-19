@@ -113,10 +113,10 @@ Environment variables should follow a **consistent prefix convention**.
 
 Example:
 
-    APP_DATABASE_URL=postgresql://...
+    APP_DATABASE_URL=postgresql+asyncpg://...
     APP_DEBUG=true
 
-The prefix prevents collisions with other services or system variables.
+The prefix prevents collisions with other services or system variables. Database URLs must use an async-compatible driver scheme (e.g. `sqlite+aiosqlite://`, `postgresql+asyncpg://`).
 
 ------------------------------------------------------------------------
 

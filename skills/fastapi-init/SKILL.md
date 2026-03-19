@@ -1,6 +1,6 @@
 ---
 name: fastapi-init
-description: Scaffold a complete, production-ready FastAPI project from scratch. Use this skill whenever the user wants to create, initialize, start, or bootstrap a FastAPI service, REST API, or Python web service — even if they just say "new service", "new API", or "new microservice". Handles uv setup, standard FastAPI directory layout, uvicorn runner, click CLI entry point, and a full pytest suite with DI overrides, TestClient, and SQLite fixtures. Always invoke for new Python API projects.
+description: Scaffold a complete, production-ready FastAPI project from scratch. Use this skill whenever the user wants to create, initialize, start, or bootstrap a FastAPI service, REST API, or Python web service — even if they just say "new service", "new API", or "new microservice". Handles uv setup, standard FastAPI directory layout, uvicorn runner, click CLI entry point, and a full pytest suite with DI overrides, AsyncClient, and async SQLite fixtures. Always invoke for new Python API projects.
 disable-model-invocation: false
 ---
 
@@ -34,7 +34,7 @@ cd {pkg_name}
 Remove the stub file uv generates (`hello.py`), then add dependencies:
 
 ```bash
-uv add fastapi "uvicorn[standard]" sqlalchemy "pydantic-settings" click
+uv add fastapi "uvicorn[standard]" "sqlalchemy[asyncio]" aiosqlite "pydantic-settings" click
 uv add --dev pytest pytest-asyncio httpx
 ```
 
@@ -78,7 +78,7 @@ Build this layout under the project root:
 │   ├── db/
 │   │   ├── __init__.py
 │   │   ├── base.py            # Base, TimestampMixin, naming convention
-│   │   └── session.py         # engine + SessionLocal + get_db
+│   │   └── session.py         # engine, AsyncSessionLocal, get_db
 │   ├── models/
 │   │   └── __init__.py        # SQLAlchemy declarative models
 │   └── schemas/
@@ -117,11 +117,13 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="{PKG_NAME}_", env_file=".env")
+    model_config = SettingsConfigDict(
+        env_prefix="{PKG_NAME}_", env_file=".env", extra="ignore",
+    )
 
     app_name: str = "{pkg_name}"
     debug: bool = False
-    database_url: str = "sqlite:///./app.db"
+    database_url: str = "sqlite+aiosqlite:///./app.db"
 
 
 settings = Settings()
@@ -163,24 +165,25 @@ class TimestampMixin:
 
 ### {pkg_name}/db/session.py
 
-Connection infrastructure. `get_db` is the single canonical source of truth for database sessions in routes and tests - this is what makes DI overrides in tests work cleanly. Background tasks run outside the FastAPI DI lifecycle and must open sessions via `SessionLocal` directly.
+Connection infrastructure. `get_db` is the single canonical source of truth for database sessions in routes and tests - this is what makes DI overrides in tests work cleanly. Background tasks run outside the FastAPI DI lifecycle and must open sessions via `AsyncSessionLocal` directly.
 
 ```python
-from typing import Generator
+from collections.abc import AsyncGenerator
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from {pkg_name}.core.config import settings
 
-engine = create_engine(settings.database_url)
-SessionLocal = sessionmaker(bind=engine)
+engine = create_async_engine(settings.database_url)
+AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 
-def get_db() -> Generator[Session, None, None]:
-    with SessionLocal() as session:
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    async with AsyncSessionLocal() as session:
         yield session
 ```
+
+`expire_on_commit=False` prevents lazy-load errors when accessing attributes after a commit on async sessions - SQLAlchemy cannot implicitly issue blocking I/O in an async context.
 
 ### {pkg_name}/api/deps.py
 
@@ -188,11 +191,11 @@ def get_db() -> Generator[Session, None, None]:
 from typing import Annotated
 
 from fastapi import Depends
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from {pkg_name}.db.session import get_db
 
-DbSession = Annotated[Session, Depends(get_db)]
+DbSession = Annotated[AsyncSession, Depends(get_db)]
 ```
 
 Use `DbSession` as a type annotation on route parameters — it's self-documenting and avoids repeating `Depends(get_db)` everywhere.
@@ -240,6 +243,24 @@ class APIModel(BaseModel):
 class ReadModel(APIModel):
     model_config = APIModel.model_config.copy()
     model_config["from_attributes"] = True
+
+
+class CreateModel(APIModel):
+    """Request body for resource creation."""
+
+
+class UpdateModel(APIModel):
+    """Partial update payload. Use model_dump(exclude_unset=True) in the service layer."""
+
+
+class QueryModel(APIModel):
+    """Search, list, and filtering inputs."""
+    model_config = APIModel.model_config.copy()
+    model_config["extra"] = "ignore"
+
+
+class CommandModel(APIModel):
+    """Action-oriented request body for non-CRUD endpoints."""
 ```
 
 ### {pkg_name}/main.py
@@ -327,55 +348,50 @@ def serve(host: str, port: int, reload: bool):
 
 ### tests/conftest.py
 
-The test suite is built around three layered fixtures. The design principle: never hit a real database, never reach outside the process, override DI at the boundary.
+The test suite is built around three layered async fixtures. The design principle: never hit a real database, never reach outside the process, override DI at the boundary.
 
 ```python
-import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
+import pytest_asyncio
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from {pkg_name}.db.base import Base
 from {pkg_name}.db.session import get_db
 from {pkg_name}.main import app
 
-TEST_DATABASE_URL = "sqlite:///:memory:"
+TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 
 
-@pytest.fixture(scope="session")
-def engine():
-    """One engine for the whole test session — schema created once.
-
-    Assumes serial execution (no pytest-xdist). For parallel workers, switch to
-    a file-based SQLite (e.g. sqlite:///tmp/test_{worker_id}.db) or a per-worker engine.
-    """
-    eng = create_engine(TEST_DATABASE_URL, connect_args={"check_same_thread": False})
-    Base.metadata.create_all(eng)
+@pytest_asyncio.fixture(scope="session")
+async def engine():
+    eng = create_async_engine(TEST_DATABASE_URL)
+    async with eng.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
     yield eng
-    Base.metadata.drop_all(eng)
+    async with eng.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+    await eng.dispose()
 
 
-@pytest.fixture
-def db_session(engine) -> Session:
-    """Per-test transaction that always rolls back — tests never bleed into each other."""
-    connection = engine.connect()
-    transaction = connection.begin()
-    TestSession = sessionmaker(bind=connection)
-    session = TestSession()
-    yield session
-    session.close()
-    transaction.rollback()
-    connection.close()
+@pytest_asyncio.fixture
+async def db_session(engine) -> AsyncSession:
+    async with engine.connect() as conn:
+        async with conn.begin() as trans:
+            session = async_sessionmaker(bind=conn, expire_on_commit=False)()
+            yield session
+            await session.close()
+            await trans.rollback()
 
 
-@pytest.fixture
-def client(db_session: Session) -> TestClient:
-    """TestClient with the real DB dependency swapped for the test SQLite session."""
-    def override_get_db():
+@pytest_asyncio.fixture
+async def client(db_session: AsyncSession) -> AsyncClient:
+    async def override_get_db():
         yield db_session
 
     app.dependency_overrides[get_db] = override_get_db
-    with TestClient(app) as c:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as c:
         yield c
     app.dependency_overrides.clear()
 ```
@@ -383,11 +399,11 @@ def client(db_session: Session) -> TestClient:
 ### tests/api/v1/test_health.py
 
 ```python
-from fastapi.testclient import TestClient
+from httpx import AsyncClient
 
 
-def test_health_returns_ok(client: TestClient):
-    response = client.get("/api/v1/health")
+async def test_health_returns_ok(client: AsyncClient):
+    response = await client.get("/api/v1/health")
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
 ```
@@ -398,11 +414,13 @@ def test_health_returns_ok(client: TestClient):
 
 Hold these across every test file in the project:
 
-1. **No test classes** — top-level `test_*` functions only; pytest fixtures handle all setup and teardown
-2. **No real databases** — all DB-touching tests use the `db_session` fixture; SQLite in-memory only
-3. **DI overrides, not patches** — swap behavior via `app.dependency_overrides`; don't mock internals
-4. **Shared fixtures in conftest.py** — test files stay clean; fixtures go in conftest
-5. **Transaction-per-test isolation** — the rollback in `db_session` ensures tests never affect each other even if they write data
+1. **Async tests** — all test functions are `async def`; `asyncio_mode = "auto"` means no per-test markers needed
+2. **No test classes** — top-level `test_*` functions only; `pytest_asyncio` fixtures handle all setup and teardown
+3. **No real databases** — all DB-touching tests use the `db_session` fixture; async SQLite in-memory only
+4. **DI overrides, not patches** — swap behavior via `app.dependency_overrides`; don't mock internals
+5. **Shared fixtures in conftest.py** — test files stay clean; fixtures go in conftest
+6. **Transaction-per-test isolation** — the rollback in `db_session` ensures tests never affect each other even if they write data
+7. **AsyncClient, not TestClient** — use `httpx.AsyncClient` with `ASGITransport` for endpoint tests
 
 ---
 

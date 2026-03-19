@@ -71,7 +71,7 @@ If the package name cannot be determined, use:
 AppError
 ```
 
-Define all exceptions in a single module — `errors.py` or `exceptions.py` at the package root. Do not scatter them across feature files.
+Define all exceptions in a single module. In fastapi-init projects this is `core/exceptions.py`. In other layouts, `exceptions.py` at the package root is typical. Do not scatter them across feature files.
 
 Example base implementation:
 

@@ -94,7 +94,7 @@ This skill does **not**:
 - invent unrelated tables or domain entities
 - generate large CRUD/service layers unless the user asks
 - merge ORM models with transport schemas
-- introduce async/session architecture changes unless required by the repo
+- redesign the async session architecture unless required by the repo
 - rewrite the database stack beyond what the current project calls for
 
 ------------------------------------------------------------------------
@@ -272,7 +272,7 @@ other layouts it may be `app/models/` or similar.
 {pkg_name}/
   db/
     base.py             # Base, TimestampMixin, naming convention
-    session.py          # engine, SessionLocal, get_db
+    session.py          # engine, AsyncSessionLocal, get_db
   models/
     __init__.py
     user.py
@@ -416,8 +416,9 @@ dependencies.
 - `pydantic-schemas` — API request/response schemas that mirror (but stay
   separate from) the ORM models
 - `alembic-migrations` — migration authoring from model metadata
-- `crud-route-builder` *(future)* — service/route layer that consumes models
 - `pytest-service` — test fixtures that use SQLite in-memory DB
+
+A route/service layer skill is planned - check the plugin's current skill list for availability.
 
 Typical order when building from scratch:
 
@@ -425,7 +426,6 @@ Typical order when building from scratch:
 2. `sqlalchemy-models`
 3. `pydantic-schemas`
 4. `alembic-migrations`
-5. `crud-route-builder`
 
 ------------------------------------------------------------------------
 

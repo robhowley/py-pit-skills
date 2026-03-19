@@ -127,7 +127,7 @@ Example:
 headers={"x-request-id": correlation_id.get()}
 ```
 
-Centralize HTTP client creation so headers are applied automatically.
+Centralize HTTP client creation so headers are applied automatically. See the http-client-integration skill for the full outbound client pattern.
 
 **6. Propagate correlation to background jobs**
 
