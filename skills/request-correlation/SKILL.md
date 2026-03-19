@@ -37,8 +37,8 @@ Correlation infrastructure must live in predictable modules.
 
 Use:
 
-app/observability/correlation.py\
-app/observability/logging.py
+{pkg_name}/observability/correlation.py\
+{pkg_name}/observability/logging.py
 
 Do not duplicate correlation logic elsewhere.
 
@@ -55,7 +55,7 @@ present, otherwise generate one, then set it into context:
 ``` python
 import uuid
 from fastapi import Request
-from app.observability.correlation import correlation_id
+from {pkg_name}.observability.correlation import correlation_id
 
 @app.middleware("http")
 async def correlation_middleware(request: Request, call_next):
@@ -127,7 +127,7 @@ Example:
 headers={"x-request-id": correlation_id.get()}
 ```
 
-Centralize HTTP client creation so headers are applied automatically.
+Centralize HTTP client creation so headers are applied automatically. See the http-client-integration skill for the full outbound client pattern.
 
 **6. Propagate correlation to background jobs**
 

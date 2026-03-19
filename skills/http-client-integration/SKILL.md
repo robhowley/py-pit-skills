@@ -40,6 +40,7 @@ Reuse the repo's established patterns when they are sound. Do not introduce a se
 - Map upstream failures into domain-specific integration errors
 - Log and instrument at the integration boundary without leaking secrets
 - Keep auth, base URL, headers, and user agent construction centralized
+- Include the correlation ID header on all outbound requests (see request-correlation skill)
 - Make the integration layer easy to mock in tests
 - Fail clearly on malformed upstream data
 - Source timeout values, retry counts, base URLs, and credentials from application configuration, not hardcoded constants

@@ -211,6 +211,32 @@ These defaults enforce:
 -   safe mutation in service-layer logic
 -   predictable enum serialization
 
+The remaining base classes are thin role markers. They exist to enforce
+naming discipline, not to add behavior (except where noted):
+
+```python
+class CreateModel(APIModel):
+    """Request body for resource creation."""
+
+class UpdateModel(APIModel):
+    """Partial update payload. Use model_dump(exclude_unset=True) in the service layer."""
+
+class QueryModel(APIModel):
+    """Search, list, and filtering inputs. All fields should be optional."""
+    model_config = APIModel.model_config.copy()
+    model_config["extra"] = "ignore"
+
+class CommandModel(APIModel):
+    """Action-oriented request body for non-CRUD endpoints."""
+
+class BatchModel(APIModel):
+    """Batch operation request body."""
+```
+
+`QueryModel` uses `extra="ignore"` because query parameters may include
+pagination or framework-injected fields that should not cause validation
+errors.
+
 ------------------------------------------------------------------------
 
 # Read Model (ORM Serialization)
@@ -218,17 +244,9 @@ These defaults enforce:
 Response models MUST support serialization from ORM objects.
 
 ```python
-from pydantic import ConfigDict
-
 class ReadModel(APIModel):
-    model_config = ConfigDict(
-        extra="forbid",
-        str_strip_whitespace=True,
-        validate_assignment=True,
-        use_enum_values=True,
-        populate_by_name=True,
-        from_attributes=True,
-    )
+    model_config = APIModel.model_config.copy()
+    model_config["from_attributes"] = True
 ```
 
 ORM objects SHOULD be converted using:
@@ -322,18 +340,15 @@ Do not invent different filter naming conventions per endpoint.
 
 ------------------------------------------------------------------------
 
-# Command Request / Response Schemas
+# Command, Batch, and Aggregate Schemas
 
-Non-CRUD actions SHOULD use explicit command request/response schemas.
+Non-CRUD endpoints need explicit schema types too - do not inline these
+as untyped dicts.
 
-Examples of command endpoints:
+### Command Request / Response
 
--   activate user
--   cancel order
--   refund payment
--   generate report
-
-Example:
+Non-CRUD actions (activate user, cancel order, refund payment, generate
+report) use explicit command request/response schemas.
 
 ```python
 class RefundPaymentRequest(CommandModel):
@@ -346,20 +361,14 @@ class RefundPaymentResponse(APIModel):
     refunded_at: datetime
 ```
 
-Do not inline command payloads as untyped dictionaries.
-
-Naming pattern — pick one and use it consistently:
+Naming pattern - pick one and use it consistently:
 
 -   `{Action}{Resource}Request`, or
 -   `{Resource}{Action}Request`
 
-------------------------------------------------------------------------
+### Batch Requests
 
-# Batch Request Schemas
-
-Batch operations SHOULD use explicit batch request models.
-
-Example:
+Batch operations use explicit batch request models.
 
 ```python
 class BulkDisableUsersRequest(BatchModel):
@@ -369,20 +378,10 @@ class BulkDisableUsersRequest(BatchModel):
 Do not pass bare lists as request bodies when the payload has semantic
 meaning.
 
-------------------------------------------------------------------------
+### Aggregate / Summary Responses
 
-# Aggregate / Summary Response Schemas
-
-Computed endpoints MUST use explicit response schemas.
-
-Examples:
-
--   analytics
--   reports
--   summaries
--   stats
-
-Example:
+Computed endpoints (analytics, reports, summaries, stats) MUST use
+explicit response schemas.
 
 ```python
 class RevenueSummary(APIModel):

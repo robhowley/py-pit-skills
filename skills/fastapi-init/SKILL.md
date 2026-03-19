@@ -1,6 +1,6 @@
 ---
 name: fastapi-init
-description: Scaffold a complete, production-ready FastAPI project from scratch. Use this skill whenever the user wants to create, initialize, start, or bootstrap a FastAPI service, REST API, or Python web service — even if they just say "new service", "new API", or "new microservice". Handles uv setup, standard FastAPI directory layout, uvicorn runner, click CLI entry point, and a full pytest suite with DI overrides, TestClient, and SQLite fixtures. Always invoke for new Python API projects.
+description: Scaffold a complete, production-ready FastAPI project from scratch. Use this skill whenever the user wants to create, initialize, start, or bootstrap a FastAPI service, REST API, or Python web service — even if they just say "new service", "new API", or "new microservice". Handles uv setup, standard FastAPI directory layout, uvicorn runner, click CLI entry point, and a full pytest suite with DI overrides, AsyncClient, and async SQLite fixtures. Always invoke for new Python API projects.
 disable-model-invocation: false
 ---
 
@@ -12,6 +12,7 @@ Scaffold a new FastAPI project end-to-end. This skill coordinates with others in
 
 - **uv skill**: use for all `uv add`, `uv run`, and environment commands — never fall back to pip
 - **click-cli skill**: consult if the user wants an extended CLI beyond the basic server entry point
+- **fastapi-errors skill**: the authority on the full error architecture — domain subclasses, error codes, auth error patterns, and existing-repo strategy
 
 ---
 
@@ -33,7 +34,7 @@ cd {pkg_name}
 Remove the stub file uv generates (`hello.py`), then add dependencies:
 
 ```bash
-uv add fastapi "uvicorn[standard]" sqlalchemy "pydantic-settings" click
+uv add fastapi "uvicorn[standard]" "sqlalchemy[asyncio]" aiosqlite "pydantic-settings" click
 uv add --dev pytest pytest-asyncio httpx
 ```
 
@@ -76,11 +77,13 @@ Build this layout under the project root:
 │   │           └── health.py
 │   ├── db/
 │   │   ├── __init__.py
-│   │   └── session.py         # engine + SessionLocal + get_db
+│   │   ├── base.py            # Base, TimestampMixin, naming convention
+│   │   └── session.py         # engine, AsyncSessionLocal, get_db
 │   ├── models/
 │   │   └── __init__.py        # SQLAlchemy declarative models
 │   └── schemas/
-│       └── __init__.py        # Pydantic I/O schemas
+│       ├── __init__.py
+│       └── base.py            # APIModel + ReadModel base schemas
 └── tests/
     ├── __init__.py
     ├── conftest.py
@@ -114,41 +117,73 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="{PKG_NAME}_", env_file=".env")
+    model_config = SettingsConfigDict(
+        env_prefix="{PKG_NAME}_", env_file=".env", extra="ignore",
+    )
 
     app_name: str = "{pkg_name}"
     debug: bool = False
-    database_url: str = "sqlite:///./app.db"
+    database_url: str = "sqlite+aiosqlite:///./app.db"
 
 
 settings = Settings()
 ```
 
-### {pkg_name}/db/session.py
+### {pkg_name}/db/base.py
 
-`get_db` is the single canonical source of truth for database sessions in routes and tests — this is what makes DI overrides in tests work cleanly. Background tasks run outside the FastAPI DI lifecycle and must open sessions via `SessionLocal` directly.
+Schema infrastructure - Base class, naming convention, and shared mixins. Models import `Base` from here.
 
 ```python
-from typing import Generator
+from datetime import datetime, timezone
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+from sqlalchemy import DateTime, MetaData
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-from {pkg_name}.core.config import settings
+convention = {
+    "ix": "ix_%(column_0_label)s",
+    "uq": "uq_%(table_name)s_%(column_0_name)s",
+    "ck": "ck_%(table_name)s_%(constraint_name)s",
+    "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
+    "pk": "pk_%(table_name)s",
+}
+
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 class Base(DeclarativeBase):
-    pass
+    metadata = MetaData(naming_convention=convention)
 
 
-engine = create_engine(settings.database_url)
-SessionLocal = sessionmaker(bind=engine)
+class TimestampMixin:
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow,
+    )
+```
+
+### {pkg_name}/db/session.py
+
+Connection infrastructure. `get_db` is the single canonical source of truth for database sessions in routes and tests - this is what makes DI overrides in tests work cleanly. Background tasks run outside the FastAPI DI lifecycle and must open sessions via `AsyncSessionLocal` directly.
+
+```python
+from collections.abc import AsyncGenerator
+
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+from {pkg_name}.core.config import settings
+
+engine = create_async_engine(settings.database_url)
+AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 
-def get_db() -> Generator[Session, None, None]:
-    with SessionLocal() as session:
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    async with AsyncSessionLocal() as session:
         yield session
 ```
+
+`expire_on_commit=False` prevents lazy-load errors when accessing attributes after a commit on async sessions - SQLAlchemy cannot implicitly issue blocking I/O in an async context.
 
 ### {pkg_name}/api/deps.py
 
@@ -156,11 +191,11 @@ def get_db() -> Generator[Session, None, None]:
 from typing import Annotated
 
 from fastapi import Depends
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from {pkg_name}.db.session import get_db
 
-DbSession = Annotated[Session, Depends(get_db)]
+DbSession = Annotated[AsyncSession, Depends(get_db)]
 ```
 
 Use `DbSession` as a type annotation on route parameters — it's self-documenting and avoids repeating `Depends(get_db)` everywhere.
@@ -174,9 +209,10 @@ class {PkgName}Error(Exception):
     status_code: int = 500
     detail: str = "An unexpected error occurred."
 
-    def __init__(self, detail: str | None = None, status_code: int | None = None):
+    def __init__(self, detail: str | None = None, status_code: int | None = None, **context):
         self.detail = detail if detail is not None else self.__class__.detail
         self.status_code = status_code if status_code is not None else self.__class__.status_code
+        self.context = context
 ```
 
 Example subclass:
@@ -184,6 +220,47 @@ Example subclass:
 class NotFoundError({PkgName}Error):
     status_code = 404
     detail = "Resource not found."
+```
+
+See the **fastapi-errors** skill for the full error architecture: domain subclasses, error codes, auth error patterns, and existing-repo strategy.
+
+### {pkg_name}/schemas/base.py
+
+```python
+from pydantic import BaseModel, ConfigDict
+
+
+class APIModel(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+        validate_assignment=True,
+        use_enum_values=True,
+        populate_by_name=True,
+    )
+
+
+class ReadModel(APIModel):
+    model_config = APIModel.model_config.copy()
+    model_config["from_attributes"] = True
+
+
+class CreateModel(APIModel):
+    """Request body for resource creation."""
+
+
+class UpdateModel(APIModel):
+    """Partial update payload. Use model_dump(exclude_unset=True) in the service layer."""
+
+
+class QueryModel(APIModel):
+    """Search, list, and filtering inputs."""
+    model_config = APIModel.model_config.copy()
+    model_config["extra"] = "ignore"
+
+
+class CommandModel(APIModel):
+    """Action-oriented request body for non-CRUD endpoints."""
 ```
 
 ### {pkg_name}/main.py
@@ -194,6 +271,7 @@ Use the lifespan pattern — `on_event` is deprecated.
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from {pkg_name}.api.v1.routes import health
@@ -212,9 +290,20 @@ app = FastAPI(title=settings.app_name, lifespan=lifespan)
 app.include_router(health.router, prefix="/api/v1")
 
 
+# see fastapi-errors skill for extended patterns (context logging, error codes, auth errors)
 @app.exception_handler({PkgName}Error)
 async def {pkg_name}_error_handler(request: Request, exc: {PkgName}Error) -> JSONResponse:
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    return JSONResponse(status_code=422, content={"detail": "Invalid request data", "details": exc.errors()})
+
+
+@app.exception_handler(Exception)
+async def unexpected_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    return JSONResponse(status_code=500, content={"detail": "An unexpected error occurred."})
 ```
 
 ### {pkg_name}/api/v1/routes/health.py
@@ -259,50 +348,50 @@ def serve(host: str, port: int, reload: bool):
 
 ### tests/conftest.py
 
-The test suite is built around three layered fixtures. The design principle: never hit a real database, never reach outside the process, override DI at the boundary.
+The test suite is built around three layered async fixtures. The design principle: never hit a real database, never reach outside the process, override DI at the boundary.
 
 ```python
-import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
+import pytest_asyncio
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from {pkg_name}.db.session import Base, get_db
+from {pkg_name}.db.base import Base
+from {pkg_name}.db.session import get_db
 from {pkg_name}.main import app
 
-TEST_DATABASE_URL = "sqlite:///:memory:"
+TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 
 
-@pytest.fixture(scope="session")
-def engine():
-    """One engine for the whole test session — schema created once."""
-    eng = create_engine(TEST_DATABASE_URL, connect_args={"check_same_thread": False})
-    Base.metadata.create_all(eng)
+@pytest_asyncio.fixture(scope="session")
+async def engine():
+    eng = create_async_engine(TEST_DATABASE_URL)
+    async with eng.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
     yield eng
-    Base.metadata.drop_all(eng)
+    async with eng.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+    await eng.dispose()
 
 
-@pytest.fixture
-def db_session(engine) -> Session:
-    """Per-test transaction that always rolls back — tests never bleed into each other."""
-    connection = engine.connect()
-    transaction = connection.begin()
-    TestSession = sessionmaker(bind=connection)
-    session = TestSession()
-    yield session
-    session.close()
-    transaction.rollback()
-    connection.close()
+@pytest_asyncio.fixture
+async def db_session(engine) -> AsyncSession:
+    async with engine.connect() as conn:
+        async with conn.begin() as trans:
+            session = async_sessionmaker(bind=conn, expire_on_commit=False)()
+            yield session
+            await session.close()
+            await trans.rollback()
 
 
-@pytest.fixture
-def client(db_session: Session) -> TestClient:
-    """TestClient with the real DB dependency swapped for the test SQLite session."""
-    def override_get_db():
+@pytest_asyncio.fixture
+async def client(db_session: AsyncSession) -> AsyncClient:
+    async def override_get_db():
         yield db_session
 
     app.dependency_overrides[get_db] = override_get_db
-    with TestClient(app) as c:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as c:
         yield c
     app.dependency_overrides.clear()
 ```
@@ -310,11 +399,11 @@ def client(db_session: Session) -> TestClient:
 ### tests/api/v1/test_health.py
 
 ```python
-from fastapi.testclient import TestClient
+from httpx import AsyncClient
 
 
-def test_health_returns_ok(client: TestClient):
-    response = client.get("/api/v1/health")
+async def test_health_returns_ok(client: AsyncClient):
+    response = await client.get("/api/v1/health")
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
 ```
@@ -325,11 +414,13 @@ def test_health_returns_ok(client: TestClient):
 
 Hold these across every test file in the project:
 
-1. **No test classes** — top-level `test_*` functions only; pytest fixtures handle all setup and teardown
-2. **No real databases** — all DB-touching tests use the `db_session` fixture; SQLite in-memory only
-3. **DI overrides, not patches** — swap behavior via `app.dependency_overrides`; don't mock internals
-4. **Shared fixtures in conftest.py** — test files stay clean; fixtures go in conftest
-5. **Transaction-per-test isolation** — the rollback in `db_session` ensures tests never affect each other even if they write data
+1. **Async tests** — all test functions are `async def`; `asyncio_mode = "auto"` means no per-test markers needed
+2. **No test classes** — top-level `test_*` functions only; `pytest_asyncio` fixtures handle all setup and teardown
+3. **No real databases** — all DB-touching tests use the `db_session` fixture; async SQLite in-memory only
+4. **DI overrides, not patches** — swap behavior via `app.dependency_overrides`; don't mock internals
+5. **Shared fixtures in conftest.py** — test files stay clean; fixtures go in conftest
+6. **Transaction-per-test isolation** — the rollback in `db_session` ensures tests never affect each other even if they write data
+7. **AsyncClient, not TestClient** — use `httpx.AsyncClient` with `ASGITransport` for endpoint tests
 
 ---
 
@@ -341,6 +432,16 @@ uv run {pkg_name} serve --help
 ```
 
 Both should succeed with no errors before handing the project to the user.
+
+---
+
+## What's next
+
+The scaffold is ready to extend. Common next steps:
+
+- **Add models** - use the `sqlalchemy-models` skill to define ORM entities under `models/`
+- **Initialize migrations** - use the `alembic-migrations` skill to set up Alembic after adding models
+- **Add schemas** - use the `pydantic-schemas` skill for request/response schemas beyond the base classes
 
 ---
 

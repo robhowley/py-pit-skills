@@ -47,6 +47,8 @@ Do **not** apply when:
 
 # Base Exception
 
+The `fastapi-init` skill scaffolds a minimal version of this class. This skill defines the complete pattern. If both are present, this skill's version is authoritative.
+
 The service defines one base exception for intentional application failures.
 
 Preferred naming pattern:
@@ -69,29 +71,31 @@ If the package name cannot be determined, use:
 AppError
 ```
 
-Define all exceptions in a single module — `errors.py` or `exceptions.py` at the package root. Do not scatter them across feature files.
+Define all exceptions in a single module. In fastapi-init projects this is `core/exceptions.py`. In other layouts, `exceptions.py` at the package root is typical. Do not scatter them across feature files.
 
 Example base implementation:
 
 ```python
 class AppError(Exception):
     status_code = 500
+    detail: str = "An unexpected error occurred."
 
-    def __init__(self, message: str | None = None, **context):
-        self.message = message or "Unhandled application error"
+    def __init__(self, detail: str | None = None, status_code: int | None = None, **context):
+        self.detail = detail if detail is not None else self.__class__.detail
+        self.status_code = status_code if status_code is not None else self.__class__.status_code
         self.context = context
-        super().__init__(self.message)
+        super().__init__(self.detail)
 
     def __str__(self) -> str:
-        return self.message
+        return self.detail
 ```
 
 Key characteristics:
 
 - default HTTP status = **500**
-- default message provided in the constructor
-- optional context data for logging
-- subclasses override `status_code` or pass formatted messages
+- class-level `detail` default, overridable per-instance or per-subclass
+- optional `**context` kwargs for structured logging
+- subclasses override `status_code` and `detail` as class attributes
 
 ---
 
@@ -104,6 +108,7 @@ Example:
 ```python
 class UserNotFoundError(AppError):
     status_code = 404
+    detail = "User not found."
 
     def __init__(self, user_id: int):
         super().__init__(f"User {user_id} not found", user_id=user_id)
@@ -127,17 +132,24 @@ Example:
 ```python
 @app.exception_handler(AppError)
 async def handle_app_error(request: Request, exc: AppError):
+    if exc.context:
+        logger.warning(
+            exc.detail,
+            extra={"error_context": exc.context, "status_code": exc.status_code},
+        )
     return JSONResponse(
         status_code=exc.status_code,
-        content={"error": str(exc)},
+        content={"detail": exc.detail},
     )
 ```
+
+The `**context` kwargs are for structured logging at the boundary, not for the client response. Use them to attach identifiers (e.g., `user_id=123`) that aid debugging without leaking internals.
 
 Response format is intentionally simple:
 
 ```json
 {
-  "error": "User 123 not found"
+  "detail": "User 123 not found"
 }
 ```
 
@@ -152,8 +164,6 @@ Use a fallback handler for uncaught exceptions:
 ```python
 @app.exception_handler(Exception)
 async def handle_unexpected_error(request: Request, exc: Exception):
-    wrapped = AppError()
-
     logger.exception(
         "Unhandled exception",
         extra={
@@ -164,8 +174,8 @@ async def handle_unexpected_error(request: Request, exc: Exception):
     )
 
     return JSONResponse(
-        status_code=wrapped.status_code,
-        content={"error": str(wrapped)},
+        status_code=500,
+        content={"detail": "An unexpected error occurred."},
     )
 ```
 
@@ -185,10 +195,15 @@ Log at minimum: request path, HTTP method, exception type, and correlation ID if
 
 In existing repositories, **inspect current error patterns before introducing new ones**.
 
-Follow these rules:
+To find existing patterns, search for:
 
-- Look for an existing internal base exception.
-- If one exists and is coherent, **extend it instead of creating a new base class**.
+- `class.*Error(Exception)` or `class.*Exception(Exception)` in the package
+- `exception_handler` registrations in the app factory or main module
+- `HTTPException` usage in service or domain code (a signal that the boundary is leaking)
+
+Then follow these rules:
+
+- If an existing internal base exception exists and is coherent, **extend it instead of creating a new base class**.
 - Integrate with existing exception handlers when possible.
 - Only introduce the recommended base-exception pattern if the repo lacks a clear contract or the user asks to refactor.
 
@@ -209,7 +224,7 @@ from fastapi.exceptions import RequestValidationError
 async def handle_validation_error(request: Request, exc: RequestValidationError):
     return JSONResponse(
         status_code=422,
-        content={"error": "Invalid request data", "details": exc.errors()},
+        content={"detail": "Invalid request data", "details": exc.errors()},
     )
 ```
 
@@ -249,17 +264,23 @@ These flow through the global `AppError` handler like any other domain exception
 
 For APIs consumed by clients that need to branch on error type — public APIs, client SDKs, multi-error workflows — a machine-readable `code` field is useful. Skip this for internal services or simple CRUD APIs where string parsing is acceptable.
 
-Pattern: add an optional `code` class attribute to the base exception; domain subclasses override it.
+Pattern: add an optional `code` class attribute to the existing base exception; domain subclasses override it. This extends the base class from the Base Exception section - do not redefine it.
 
 ```python
 class AppError(Exception):
     status_code = 500
-    code: str | None = None  # add this
-    ...
+    detail: str = "An unexpected error occurred."
+    code: str | None = None  # add this to the existing base
 
+    ...
+```
+
+Subclasses set a value:
+
+```python
 class UserNotFoundError(AppError):
     status_code = 404
-    code = "user_not_found"  # subclasses set a value
+    code = "user_not_found"
     ...
 ```
 
@@ -268,7 +289,7 @@ Update the global handler to include `code` when present:
 ```python
 @app.exception_handler(AppError)
 async def handle_app_error(request: Request, exc: AppError):
-    content = {"error": str(exc)}
+    content = {"detail": exc.detail}
     if exc.code:
         content["code"] = exc.code
     return JSONResponse(status_code=exc.status_code, content=content)
@@ -278,7 +299,7 @@ Response shape when `code` is set:
 
 ```json
 {
-  "error": "User 123 not found",
+  "detail": "User 123 not found",
   "code": "user_not_found"
 }
 ```

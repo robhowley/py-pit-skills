@@ -1,9 +1,9 @@
 ---
 name: pytest-service
 description: Write disciplined backend tests for FastAPI services with pytest. Use
-  this skill when adding tests to a Python/FastAPI service, setting up SQLAlchemy
-  test fixtures, wiring TestClient with DI overrides, mocking external clients, or
-  improving test maintainability. Covers fixture design, factory patterns, SQLite
+  this skill when adding tests to a Python/FastAPI service, setting up async SQLAlchemy
+  test fixtures, wiring AsyncClient with DI overrides, mocking external clients, or
+  improving test maintainability. Covers fixture design, factory patterns, async SQLite
   in-memory databases, app.dependency_overrides, and avoiding fragile or redundant
   tests.
 disable-model-invocation: false
@@ -32,14 +32,16 @@ Prefer **simple local tests with minimal infrastructure**.
 
 Rules:
 
--   Prefer **`TestClient`** for FastAPI endpoint tests whenever possible
--   Use **async clients only when the test genuinely requires async behavior**
--   Default test databases to **SQLite via SQLAlchemy fixtures**
+-   Use **`httpx.AsyncClient`** with `ASGITransport` for FastAPI endpoint tests
+-   All test functions are **`async def`**; `asyncio_mode = "auto"` eliminates per-test markers
+-   Use **`pytest_asyncio` fixtures** for async setup/teardown
+-   Default test databases to **async SQLite via SQLAlchemy async fixtures**
 -   Do **not introduce Docker databases** unless the repository already uses them for testing
 -   External clients must be **mocked**, not called
 -   **No test classes** — top-level `test_*` functions only; fixtures handle all setup
 -   Each test covers a **distinct behavior** — no redundant assertions across tests
 -   Avoid mutable default arguments in fixtures and helpers
+-   Dev deps assumed: `pytest`, `pytest-asyncio`, `httpx`
 
 Tests must run reliably with a simple `pytest`. No external services required.
 
@@ -76,30 +78,31 @@ Choose fixture scope based on what the fixture creates and how expensive it is.
 -   `scope="session"` — for things that are expensive to create and safe to share (e.g., the SQLAlchemy engine, schema creation)
 -   `scope="function"` (default) — for anything that holds mutable state or must be isolated per test (e.g., sessions, clients, mocks)
 
-A common pattern: session-scoped engine, function-scoped session with rollback.
+A common pattern: session-scoped async engine, function-scoped async session with rollback.
 
 ``` python
-@pytest.fixture(scope="session")
-def engine():
-    eng = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
-    Base.metadata.create_all(eng)
+@pytest_asyncio.fixture(scope="session")
+async def engine():
+    eng = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with eng.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
     yield eng
-    Base.metadata.drop_all(eng)
+    async with eng.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+    await eng.dispose()
 
 
-@pytest.fixture
-def db_session(engine) -> Session:
-    connection = engine.connect()
-    transaction = connection.begin()
-    TestSession = sessionmaker(bind=connection)
-    session = TestSession()
-    yield session
-    session.close()
-    transaction.rollback()
-    connection.close()
+@pytest_asyncio.fixture
+async def db_session(engine) -> AsyncSession:
+    async with engine.connect() as conn:
+        async with conn.begin() as trans:
+            session = async_sessionmaker(bind=conn, expire_on_commit=False)()
+            yield session
+            await session.close()
+            await trans.rollback()
 ```
 
-The rollback in teardown means tests never bleed into each other even when they write data.
+The rollback in teardown means tests never bleed into each other even when they write data. `expire_on_commit=False` prevents lazy-load errors after commit in async sessions.
 
 ## Factory fixtures
 
@@ -154,13 +157,15 @@ Tests should control behavior explicitly rather than relying on fixture branchin
 Use **`app.dependency_overrides`** to swap FastAPI dependencies in tests. Do not patch internals directly.
 
 ``` python
-@pytest.fixture
-def client(db_session):
-    def override_get_db():
+@pytest_asyncio.fixture
+async def client(db_session: AsyncSession) -> AsyncClient:
+    async def override_get_db():
         yield db_session
 
     app.dependency_overrides[get_db] = override_get_db
-    with TestClient(app) as c:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as c:
         yield c
     app.dependency_overrides.clear()
 ```
@@ -169,11 +174,11 @@ Always clear `dependency_overrides` in teardown so overrides don't leak between 
 
 ## FastAPI testing
 
-Prefer `TestClient` for endpoint tests.
+Use `httpx.AsyncClient` with `ASGITransport` for endpoint tests.
 
 ``` python
-def test_health_endpoint(client):
-    response = client.get("/health")
+async def test_health_endpoint(client: AsyncClient):
+    response = await client.get("/health")
 
     assert response.status_code == 200
     assert response.json()["status"] == "ok"

@@ -61,19 +61,21 @@ Example pattern:
 from fastapi import BackgroundTasks
 
 @app.post("/users/{user_id}/welcome")
-def send_welcome(user_id: int, background_tasks: BackgroundTasks):
+async def send_welcome(user_id: int, background_tasks: BackgroundTasks):
     background_tasks.add_task(send_welcome_email, user_id)
     return {"status": "scheduled"}
 
 
-def send_welcome_email(user_id: int):
-    with SessionLocal() as session:
-        user = session.get(User, user_id)
+async def send_welcome_email(user_id: int):
+    async with AsyncSessionLocal() as session:
+        user = await session.get(User, user_id)
         if not user:
             return
 
-        email_service.send_welcome(user.email)
+        await email_service.send_welcome(user.email)
 ```
+
+Background task functions must be `async def` when using async sessions. FastAPI runs async background tasks in the event loop, so this works without threads. For CPU-heavy or truly blocking work, use a real job queue instead.
 
 Key properties:
 
